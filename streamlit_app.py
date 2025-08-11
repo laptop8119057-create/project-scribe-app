@@ -1,5 +1,6 @@
 # streamlit_app.py
 
+# DO NOT REMOVE: Fix for ChromaDB on Streamlit Cloud
 __import__('pysqlite3')
 import sys
 sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
@@ -102,7 +103,7 @@ def extract_text_from_file(filepath):
         elif extension in ['jpg', 'jpeg']:
             text = pytesseract.image_to_string(Image.open(filepath))
         return text
-    except Exception as e: 
+    except Exception as e:
         print(f"Error extracting text: {e}")
         return None
 
@@ -119,23 +120,32 @@ with tab1:
     if st.button("Ask The Assistant", key="ask_button"):
         if not question:
             st.warning("Please enter a question.")
-        elif rag_chain is None or retriever is None:
+        elif rag_chain is None or retriever is None or db is None:
             st.error("RAG components are not available. Check initialization.")
         else:
-            with st.spinner("Step 1 of 2: Searching knowledge base..."):
-                context_docs = retriever.invoke(question)
-            with st.spinner("Step 2 of 2: Generating answer with AI..."):
-                try:
-                    response_data = rag_chain.invoke({"context": context_docs, "question": question})
-                    st.subheader("Answer:")
-                    st.write(response_data['answer'])
-                    st.subheader("Sources Used:")
-                    for doc in response_data['context']:
-                        with st.expander(f"Source: {doc.metadata.get('source', 'Unknown')}"):
-                            st.write(doc.page_content)
-                except Exception as e:
-                    st.error(f"Failed to generate answer: {e}")
-                    traceback.print_exc()
+            # Check if the database is empty before proceeding
+            try:
+                existing_docs = db.get(include=[]) # A lightweight way to check for existence
+                if not existing_docs or not existing_docs['ids']:
+                    st.warning("The knowledge base is empty. Please upload a document in the 'Knowledge Base Manager' tab first.")
+                else:
+                    with st.spinner("Step 1 of 2: Searching knowledge base..."):
+                        context_docs = retriever.invoke(question)
+                    with st.spinner("Step 2 of 2: Generating answer with AI..."):
+                        try:
+                            response_data = rag_chain.invoke({"context": context_docs, "question": question})
+                            st.subheader("Answer:")
+                            st.write(response_data['answer'])
+                            st.subheader("Sources Used:")
+                            for doc in response_data['context']:
+                                with st.expander(f"Source: {doc.metadata.get('source', 'Unknown')}"):
+                                    st.write(doc.page_content)
+                        except Exception as e:
+                            st.error(f"Failed to generate answer: {e}")
+                            traceback.print_exc()
+            except Exception as e:
+                st.error(f"An error occurred while checking the database: {e}")
+
 
 # --- Tab 2: Knowledge Base Manager ---
 with tab2:
