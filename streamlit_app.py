@@ -10,7 +10,6 @@ import os
 import traceback
 from operator import itemgetter
 from typing import List
-from requests.exceptions import JSONDecodeError
 
 # --- Tenacity for Retrying ---
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -45,15 +44,14 @@ os.makedirs(CHROMA_PATH, exist_ok=True)
 
 # --- THE ROBUST SOLUTION: A RETRYING EMBEDDER ---
 # This class inherits from the original and adds retry logic.
+# If it fails after all retries, it will re-raise the last exception,
+# which our main app logic can then catch gracefully.
 class RetryingHuggingFaceInferenceAPIEmbeddings(HuggingFaceInferenceAPIEmbeddings):
     @retry(
-        wait=wait_fixed(5),  # Wait 5 seconds between retries
-        stop=stop_after_attempt(6),  # Retry a maximum of 6 times (total 30 seconds)
-        retry_error_callback=lambda retry_state: "MODEL_LOADING" # Return a special value on final failure
+        wait=wait_fixed(5),
+        stop=stop_after_attempt(6)
     )
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        # This function calls the original, error-prone function.
-        # The @retry decorator handles the JSONDecodeError automatically.
         return super().embed_documents(texts)
 
 
@@ -68,7 +66,7 @@ def initialize_rag_components():
         
         login(token=HF_TOKEN)
 
-        # Use our new, robust embedder instead of the original
+        # Use our new, robust embedder
         embeddings = RetryingHuggingFaceInferenceAPIEmbeddings(
             api_key=HF_TOKEN, model_name="sentence-transformers/all-MiniLM-l6-v2"
         )
@@ -185,7 +183,8 @@ with tab2:
                         st.success(f"Success! Processed '{filename}' and added {len(documents)} chunks to the knowledge base.")
                         st.rerun()
                 except Exception as e:
-                    st.error(f"Could not add document to database: {e}")
+                    # This will now catch the error cleanly if all retries fail
+                    st.error(f"Could not add document to database. The AI model might be temporarily unavailable. The error was: {e}")
                     traceback.print_exc()
     st.subheader("Current Knowledge Base")
     if db is not None:
