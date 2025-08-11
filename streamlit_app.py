@@ -20,7 +20,7 @@ from langchain_core.runnables import RunnableParallel
 from langchain.schema.output_parser import StrOutputParser
 
 # --- Document Processing Imports ---
-from werkzeug import secure_filename
+from werkzeug.utils import secure_filename
 import pytesseract
 from PIL import Image
 import fitz
