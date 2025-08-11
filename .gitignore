@@ -1,0 +1,11 @@
+    # Ignore the Python virtual environment
+venv/
+
+# Ignore Python's cache folder
+__pycache__/
+
+# Ignore the local Chroma database. The deployed app will create its own.
+chroma/
+
+# Ignore locally uploaded test files.
+uploads/
