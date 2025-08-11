@@ -9,6 +9,11 @@ import streamlit as st
 import os
 import traceback
 from operator import itemgetter
+from typing import List
+from requests.exceptions import JSONDecodeError
+
+# --- Tenacity for Retrying ---
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 # --- LangChain & AI Imports ---
 from huggingface_hub import login
@@ -38,6 +43,19 @@ CHROMA_PATH = os.path.join(project_root, 'chroma')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(CHROMA_PATH, exist_ok=True)
 
+# --- THE ROBUST SOLUTION: A RETRYING EMBEDDER ---
+# This class inherits from the original and adds retry logic.
+class RetryingHuggingFaceInferenceAPIEmbeddings(HuggingFaceInferenceAPIEmbeddings):
+    @retry(
+        wait=wait_fixed(5),  # Wait 5 seconds between retries
+        stop=stop_after_attempt(6),  # Retry a maximum of 6 times (total 30 seconds)
+        retry_error_callback=lambda retry_state: "MODEL_LOADING" # Return a special value on final failure
+    )
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        # This function calls the original, error-prone function.
+        # The @retry decorator handles the JSONDecodeError automatically.
+        return super().embed_documents(texts)
+
 
 # --- Caching RAG Components (Lazy Loading) ---
 @st.cache_resource
@@ -50,7 +68,8 @@ def initialize_rag_components():
         
         login(token=HF_TOKEN)
 
-        embeddings = HuggingFaceInferenceAPIEmbeddings(
+        # Use our new, robust embedder instead of the original
+        embeddings = RetryingHuggingFaceInferenceAPIEmbeddings(
             api_key=HF_TOKEN, model_name="sentence-transformers/all-MiniLM-l6-v2"
         )
         db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
@@ -123,28 +142,24 @@ with tab1:
         elif rag_chain is None or retriever is None or db is None:
             st.error("RAG components are not available. Check initialization.")
         else:
-            # Check if the database is empty before proceeding
             try:
-                existing_docs = db.get(include=[]) # A lightweight way to check for existence
+                existing_docs = db.get(include=[]) 
                 if not existing_docs or not existing_docs['ids']:
                     st.warning("The knowledge base is empty. Please upload a document in the 'Knowledge Base Manager' tab first.")
                 else:
                     with st.spinner("Step 1 of 2: Searching knowledge base..."):
                         context_docs = retriever.invoke(question)
                     with st.spinner("Step 2 of 2: Generating answer with AI..."):
-                        try:
-                            response_data = rag_chain.invoke({"context": context_docs, "question": question})
-                            st.subheader("Answer:")
-                            st.write(response_data['answer'])
-                            st.subheader("Sources Used:")
-                            for doc in response_data['context']:
-                                with st.expander(f"Source: {doc.metadata.get('source', 'Unknown')}"):
-                                    st.write(doc.page_content)
-                        except Exception as e:
-                            st.error(f"Failed to generate answer: {e}")
-                            traceback.print_exc()
+                        response_data = rag_chain.invoke({"context": context_docs, "question": question})
+                        st.subheader("Answer:")
+                        st.write(response_data['answer'])
+                        st.subheader("Sources Used:")
+                        for doc in response_data['context']:
+                            with st.expander(f"Source: {doc.metadata.get('source', 'Unknown')}"):
+                                st.write(doc.page_content)
             except Exception as e:
-                st.error(f"An error occurred while checking the database: {e}")
+                st.error(f"An error occurred while running the query: {e}")
+                traceback.print_exc()
 
 
 # --- Tab 2: Knowledge Base Manager ---
@@ -156,7 +171,7 @@ with tab2:
         filename = secure_filename(uploaded_file.name)
         filepath = os.path.join(UPLOAD_FOLDER, filename)
         with open(filepath, "wb") as f: f.write(uploaded_file.getbuffer())
-        with st.spinner(f"Processing '{filename}'..."):
+        with st.spinner(f"Processing '{filename}'... This may take a minute if the model is waking up."):
             raw_text = extract_text_from_file(filepath)
             if raw_text is None:
                 st.error("Could not extract text from the file.")
@@ -165,11 +180,13 @@ with tab2:
                 documents = text_splitter.create_documents(texts=[raw_text], metadatas=[{"source": filename}])
                 try:
                     if db is not None:
+                        # This call is now protected by the retry logic
                         db.add_documents(documents=documents)
                         st.success(f"Success! Processed '{filename}' and added {len(documents)} chunks to the knowledge base.")
                         st.rerun()
                 except Exception as e:
                     st.error(f"Could not add document to database: {e}")
+                    traceback.print_exc()
     st.subheader("Current Knowledge Base")
     if db is not None:
         try:
