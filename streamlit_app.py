@@ -43,16 +43,19 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(CHROMA_PATH, exist_ok=True)
 
 # --- THE ROBUST SOLUTION: A RETRYING EMBEDDER ---
-# This class inherits from the original and adds retry logic.
-# If it fails after all retries, it will re-raise the last exception,
-# which our main app logic can then catch gracefully.
+# This class inherits from the original and adds smarter retry logic.
 class RetryingHuggingFaceInferenceAPIEmbeddings(HuggingFaceInferenceAPIEmbeddings):
     @retry(
-        wait=wait_fixed(10),
-        stop=stop_after_attempt(15)
+        wait=wait_fixed(8),
+        stop=stop_after_attempt(12)
     )
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        return super().embed_documents(texts)
+        # Call the original, error-prone function
+        result = super().embed_documents(texts)
+        # **THE FINAL FIX**: Check for an empty response and treat it as an error to trigger a retry.
+        if not result:
+            raise ValueError("Hugging Face API returned an empty list of embeddings. Retrying...")
+        return result
 
 
 # --- Caching RAG Components (Lazy Loading) ---
@@ -178,7 +181,7 @@ with tab2:
                 documents = text_splitter.create_documents(texts=[raw_text], metadatas=[{"source": filename}])
                 try:
                     if db is not None:
-                        # This call is now protected by the retry logic
+                        # This call is now protected by the smarter retry logic
                         db.add_documents(documents=documents)
                         st.success(f"Success! Processed '{filename}' and added {len(documents)} chunks to the knowledge base.")
                         st.rerun()
