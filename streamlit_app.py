@@ -43,16 +43,13 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(CHROMA_PATH, exist_ok=True)
 
 # --- THE ROBUST SOLUTION: A RETRYING EMBEDDER ---
-# This class inherits from the original and adds smarter retry logic.
 class RetryingHuggingFaceInferenceAPIEmbeddings(HuggingFaceInferenceAPIEmbeddings):
     @retry(
         wait=wait_fixed(8),
         stop=stop_after_attempt(12)
     )
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        # Call the original, error-prone function
         result = super().embed_documents(texts)
-        # **THE FINAL FIX**: Check for an empty response and treat it as an error to trigger a retry.
         if not result:
             raise ValueError("Hugging Face API returned an empty list of embeddings. Retrying...")
         return result
@@ -67,12 +64,17 @@ def initialize_rag_components():
             st.error("HF_TOKEN secret not found. Please set it in the Streamlit app settings.")
             return None, None, None
         
+        # This login is helpful for certain environments but might be redundant
+        # We will keep it for now as it doesn't hurt.
         login(token=HF_TOKEN)
 
-        # Use our new, robust embedder
+        # --- THE FINAL FIX IS HERE ---
+        # We remove the `api_key` parameter. The library will find the token
+        # automatically from the environment variables set by st.secrets.
         embeddings = RetryingHuggingFaceInferenceAPIEmbeddings(
-            api_key=HF_TOKEN, model_name="sentence-transformers/all-MiniLM-l6-v2"
+            model_name="sentence-transformers/all-MiniLM-l6-v2"
         )
+        
         db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
         retriever = db.as_retriever(search_kwargs={"k": 3})
 
@@ -84,7 +86,7 @@ def initialize_rag_components():
         """
         prompt = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
         llm = HuggingFaceEndpoint(
-            repo_id="google/flan-t5-large", huggingfacehub_api_token=HF_TOKEN
+            repo_id="google/flan-t5-large"
         )
 
         def format_docs(docs):
@@ -181,12 +183,10 @@ with tab2:
                 documents = text_splitter.create_documents(texts=[raw_text], metadatas=[{"source": filename}])
                 try:
                     if db is not None:
-                        # This call is now protected by the smarter retry logic
                         db.add_documents(documents=documents)
                         st.success(f"Success! Processed '{filename}' and added {len(documents)} chunks to the knowledge base.")
                         st.rerun()
                 except Exception as e:
-                    # This will now catch the error cleanly if all retries fail
                     st.error(f"Could not add document to database. The AI model might be temporarily unavailable. The error was: {e}")
                     traceback.print_exc()
     st.subheader("Current Knowledge Base")
