@@ -64,15 +64,13 @@ def initialize_rag_components():
             st.error("HF_TOKEN secret not found. Please set it in the Streamlit app settings.")
             return None, None, None
         
-        # This login is helpful for certain environments but might be redundant
-        # We will keep it for now as it doesn't hurt.
         login(token=HF_TOKEN)
 
         # --- THE FINAL FIX IS HERE ---
-        # We remove the `api_key` parameter. The library will find the token
-        # automatically from the environment variables set by st.secrets.
+        # Re-adding the api_key and huggingfacehub_api_token parameters, as the error
+        # messages confirm they are explicitly required for initialization.
         embeddings = RetryingHuggingFaceInferenceAPIEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-l6-v2"
+            api_key=HF_TOKEN, model_name="sentence-transformers/all-MiniLM-l6-v2"
         )
         
         db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
@@ -86,7 +84,7 @@ def initialize_rag_components():
         """
         prompt = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
         llm = HuggingFaceEndpoint(
-            repo_id="google/flan-t5-large"
+            repo_id="google/flan-t5-large", huggingfacehub_api_token=HF_TOKEN
         )
 
         def format_docs(docs):
