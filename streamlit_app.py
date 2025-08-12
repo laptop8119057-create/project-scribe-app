@@ -48,8 +48,8 @@ os.makedirs(CHROMA_PATH, exist_ok=True)
 # which our main app logic can then catch gracefully.
 class RetryingHuggingFaceInferenceAPIEmbeddings(HuggingFaceInferenceAPIEmbeddings):
     @retry(
-        wait=wait_fixed(5),
-        stop=stop_after_attempt(6)
+        wait=wait_fixed(10),
+        stop=stop_after_attempt(15)
     )
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         return super().embed_documents(texts)
