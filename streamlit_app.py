@@ -15,7 +15,7 @@ from typing import List
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 # --- LangChain & AI Imports ---
-from huggingface_hub import login
+# REMOVED the global `login` import as it's no longer needed
 from langchain_community.llms import HuggingFaceEndpoint
 from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -35,7 +35,11 @@ from docx import Document
 st.set_page_config(page_title="Project Al-Kharizmi", layout="wide")
 
 # --- Configuration & Secrets ---
-HF_TOKEN = st.secrets.get("HF_TOKEN")
+# We still need to ensure the secret exists.
+if "HF_TOKEN" not in st.secrets:
+    st.error("HF_TOKEN secret not found. Please set it in the Streamlit app settings.")
+    st.stop()
+
 project_root = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_FOLDER = os.path.join(project_root, 'uploads')
 CHROMA_PATH = os.path.join(project_root, 'chroma')
@@ -60,17 +64,16 @@ class RetryingHuggingFaceInferenceAPIEmbeddings(HuggingFaceInferenceAPIEmbedding
 def initialize_rag_components():
     st.write("Initializing RAG components for the first time... This may take a moment.")
     try:
-        if not HF_TOKEN:
-            st.error("HF_TOKEN secret not found. Please set it in the Streamlit app settings.")
-            return None, None, None
-        
-        login(token=HF_TOKEN)
-
         # --- THE FINAL FIX IS HERE ---
-        # Re-adding the api_key and huggingfacehub_api_token parameters, as the error
-        # messages confirm they are explicitly required for initialization.
+        # REMOVED all manual token passing. The libraries will find the HF_TOKEN
+        # from the environment set by st.secrets, resolving the conflict.
+        
         embeddings = RetryingHuggingFaceInferenceAPIEmbeddings(
-            api_key=HF_TOKEN, model_name="sentence-transformers/all-MiniLM-l6-v2"
+            model_name="sentence-transformers/all-MiniLM-l6-v2"
+        )
+        
+        llm = HuggingFaceEndpoint(
+            repo_id="google/flan-t5-large"
         )
         
         db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
@@ -83,10 +86,7 @@ def initialize_rag_components():
         Answer the question based on the above context: {question}
         """
         prompt = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
-        llm = HuggingFaceEndpoint(
-            repo_id="google/flan-t5-large", huggingfacehub_api_token=HF_TOKEN
-        )
-
+        
         def format_docs(docs):
             return "\n\n".join(doc.page_content for doc in docs)
 
